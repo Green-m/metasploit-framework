@@ -18,6 +18,7 @@ group :development do
   gem 'pry'
   # module documentation
   gem 'octokit'
+  gem 'pry-byebug'
   # Metasploit::Aggregator external session proxy
   # disabled during 2.5 transition until aggregator is available
   #gem 'metasploit-aggregator'
